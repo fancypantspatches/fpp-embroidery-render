@@ -1,11 +1,14 @@
 import os
 import io
 import tempfile
-import traceback  # <--- 1. ADD THIS LINE
+import traceback
+import logging  # <-- ADD THIS
 from flask import Flask, request, send_file, jsonify
 from pyembroidery import read
 
-# Initialize the Flask application
+# Configure the logging system to be more robust
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s:%(message)s')
+
 app = Flask(__name__)
 
 @app.route('/')
@@ -24,11 +27,14 @@ def render_embroidery_file():
 
     temp_file_path = None
     try:
+        # We will do all file operations inside the 'with' block
+        # to ensure the file is not closed prematurely.
         with tempfile.NamedTemporaryFile(delete=False, suffix=uploaded_file.filename) as temp_f:
             uploaded_file.save(temp_f)
             temp_file_path = temp_f.name
 
-        pattern = read(temp_file_path)
+            # --- THE FIX: Read the file while it is still open ---
+            pattern = read(temp_file_path)
 
         if pattern is None:
             return jsonify({"error": "Could not parse embroidery pattern. File may be corrupt or unsupported."}), 400
@@ -44,12 +50,11 @@ def render_embroidery_file():
         return send_file(img_io, mimetype='image/png')
 
     except Exception as e:
-        # --- START OF THE FIX ---
-        # This will print the full, detailed error to the Railway logs
-        traceback.print_exc()  # <--- 2. ADD THIS LINE
-        # --- END OF THE FIX ---
+        # Use the powerful logging library to capture the error
+        logging.exception("CRITICAL ERROR IN RENDER ENDPOINT:")
         return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
     finally:
+        # Clean up the temp file
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
