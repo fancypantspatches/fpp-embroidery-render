@@ -1,57 +1,81 @@
-from flask import Flask, request, send_file, jsonify
-from pyembroidery import read
-from PIL import Image, ImageDraw
-import requests
-import tempfile
+import os
 import io
+import tempfile
+import logging
+from flask import Flask, request, send_file, jsonify
+from pyembroidery import read, STITCH, JUMP # <-- Import the command constants
+from PIL import Image, ImageDraw
+
+# Configure the logging system
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s:%(message)s')
 
 app = Flask(__name__)
 
-@app.route("/render", methods=["POST"])
-def render():
-    data = request.get_json()
-    file_url = data.get("fileUrl")
+@app.route('/')
+def health_check():
+    return jsonify({"status": "ok", "message": "Embroidery rendering service is running."})
 
-    if not file_url:
-        return jsonify({"error": "Missing fileUrl"}), 400
+@app.route('/render', methods=['POST'])
+def render_embroidery_file():
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part in the request"}), 400
 
+    uploaded_file = request.files['file']
+
+    if uploaded_file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+
+    temp_file_path = None
     try:
-        # Download the embroidery file
-        response = requests.get(file_url)
-        response.raise_for_status()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=uploaded_file.filename) as temp_f:
+            uploaded_file.save(temp_f)
+            temp_file_path = temp_f.name
+            pattern = read(temp_file_path)
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".dst") as temp_file:
-            temp_file.write(response.content)
-            temp_path = temp_file.name
+        if pattern is None:
+            return jsonify({"error": "Could not parse embroidery pattern."}), 400
 
-        # Read the embroidery pattern
-        pattern = read(temp_path)
+        # --- START OF THE FINAL, FINAL FIX ---
+        bounds = pattern.bounds()
+        width = int(bounds[2] - bounds[0])
+        height = int(bounds[3] - bounds[1])
 
-        # Calculate image size
-        xmin, ymin, xmax, ymax = pattern.extents()
-        width = int(xmax - xmin + 20)
-        height = int(ymax - ymin + 20)
+        if width <= 0 or height <= 0:
+            return jsonify({"error": "Pattern has no dimensions."}), 400
 
-        # Render image
-        img = Image.new("RGB", (width, height), "white")
-        draw = ImageDraw.Draw(img)
-        current_pos = None
+        image = Image.new("RGBA", (width, height), (255, 255, 255, 0)) # Transparent background
+        draw = ImageDraw.Draw(image)
+
+        last_x, last_y = None, None
+
         for stitch in pattern.stitches:
-            x, y = stitch[0] - xmin + 10, stitch[1] - ymin + 10
-            if current_pos:
-                draw.line([current_pos, (x, y)], fill="black", width=1)
-            current_pos = (x, y)
+            x, y, command = stitch[0], stitch[1], stitch[2]
+            
+            # Translate coordinates to image space (0,0)
+            ix = int(x - bounds[0])
+            iy = int(y - bounds[1])
 
-        # Save to in-memory file
-        img_bytes = io.BytesIO()
-        img.save(img_bytes, format='PNG')
-        img_bytes.seek(0)
+            if command == STITCH and last_x is not None:
+                # Draw a line from the last point to the current point
+                draw.line((last_x, last_y, ix, iy), fill=(0, 0, 0), width=2) # Black stitches
+            
+            # The current point becomes the next 'last_point'
+            last_x, last_y = ix, iy
+        # --- END OF THE FINAL, FINAL FIX ---
 
-        return send_file(img_bytes, mimetype='image/png')
+        img_io = io.BytesIO()
+        image.save(img_io, 'PNG')
+        img_io.seek(0)
+
+        return send_file(img_io, mimetype='image/png')
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logging.exception("CRITICAL ERROR IN RENDER ENDPOINT:")
+        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
 
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
