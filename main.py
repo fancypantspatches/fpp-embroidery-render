@@ -1,59 +1,64 @@
+import os
+import io
 from flask import Flask, request, send_file, jsonify
 from pyembroidery import read
 
-from PIL import Image, ImageDraw
-import requests
-import tempfile
-import os
-
+# Initialize the Flask application
 app = Flask(__name__)
 
-@app.route("/render", methods=["POST"])
-def render():
-    data = request.get_json()
-    file_url = data.get("fileUrl")
+@app.route('/')
+def health_check():
+    """
+    A simple health-check endpoint to confirm the server is running.
+    """
+    return jsonify({"status": "ok", "message": "Embroidery rendering service is running."})
 
-    if not file_url:
-        return jsonify({"error": "Missing fileUrl"}), 400
+@app.route('/render', methods=['POST'])
+def render_embroidery_file():
+    """
+    This endpoint accepts a file upload, renders it as a PNG,
+    and returns the image directly in the response.
+    """
+    # Check if a file was included in the POST request
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part in the request"}), 400
 
-    try:
-        # Download the embroidery file
-        response = requests.get(file_url)
-        response.raise_for_status()
+    file = request.files['file']
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".emb") as temp_file:
-            temp_file.write(response.content)
-            temp_path = temp_file.name
+    # Check if a file was actually selected for upload
+    if file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
 
-        # Read the embroidery pattern
-        pattern = read(temp_path)
+    if file:
+        try:
+            # Read the embroidery pattern directly from the uploaded file's stream
+            pattern = read(file)
 
-        # Get extents for sizing the image
-        extents = pattern.extents()
-        xmin, ymin, xmax, ymax = extents
-        width = int(xmax - xmin + 20)
-        height = int(ymax - ymin + 20)
+            if pattern is None:
+                return jsonify({"error": "Could not parse embroidery pattern. File may be corrupt or unsupported."}), 400
 
-        # Create a blank image and draw the stitches
-        img = Image.new("RGB", (width, height), "white")
-        draw = ImageDraw.Draw(img)
+            # Generate the image using the correct .get_image() method
+            image = pattern.get_image()
 
-        current_pos = None
-        for stitch in pattern.stitches:
-            x, y = stitch[0] - xmin + 10, stitch[1] - ymin + 10
-            if current_pos:
-                draw.line([current_pos, (x, y)], fill="black", width=1)
-            current_pos = (x, y)
+            if image is None:
+                return jsonify({"error": "Failed to generate image from pattern"}), 500
 
-        # Save to temporary image file
-        preview_path = temp_path.replace(".emb", "_preview.png")
-        img.save(preview_path)
+            # Save the image to an in-memory buffer instead of a file on disk
+            img_io = io.BytesIO()
+            image.save(img_io, 'PNG')
+            img_io.seek(0) # Rewind the buffer to the beginning
 
-        return send_file(preview_path, mimetype="image/png")
+            # Send the image buffer as the HTTP response
+            return send_file(img_io, mimetype='image/png')
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        except Exception as e:
+            # Return a generic server error if anything goes wrong
+            return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
 
+    return jsonify({"error": "Invalid file"}), 400
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+if __name__ == '__main__':
+    # Get the port from the environment variable Railway provides
+    port = int(os.environ.get("PORT", 8080))
+    # Run the app, listening on all network interfaces
+    app.run(host='0.0.0.0', port=port)
