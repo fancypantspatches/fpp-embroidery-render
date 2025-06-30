@@ -56,20 +56,18 @@ def render_embroidery_file():
             logging.warning("Pattern has no valid dimensions.")
             return jsonify({"error": "Pattern has no valid dimensions."}), 400
         
-        logging.info(f"Creating image with dimensions: {width}x{height}")
         image = Image.new("RGBA", (width, height), (255, 255, 255, 0))
         draw = ImageDraw.Draw(image)
 
-        # --- FINAL CORRECTED COLOR LOGIC ---
-        # Access the .color attribute directly, which works for all thread types
         colors = [thread.color for thread in pattern.threadlist]
         
         if not colors:
-            # Fallback for files like DST that have no color info
             colors = [(0, 0, 0), (255, 0, 0), (0, 0, 255), (0, 255, 0)] 
 
-        # This check prevents a crash if a file has 0 colors and no fallback is triggered
+        # --- NEW ROBUSTNESS CHECK ---
+        # This prevents a crash if a file has 0 colors and the fallback fails.
         if not colors:
+            logging.error("Pattern contains no colors to render.")
             return jsonify({"error": "Pattern contains no colors to render."}), 400
 
         thread_index = 0
@@ -96,11 +94,18 @@ def render_embroidery_file():
             last_x, last_y = ix, iy
 
         img_io = io.BytesIO()
-        image.save(img_io, 'PNG')
+        image.save(img_io, 'PNG', quality=100)
         img_io.seek(0)
         
-        logging.info("Successfully rendered and sending image.")
-        return send_file(img_io, mimetype='image/png')
+        logging.info("Successfully rendered. Sending PNG image.")
+        
+        # --- MORE EXPLICIT send_file COMMAND ---
+        return send_file(
+            img_io,
+            mimetype='image/png',
+            as_attachment=True,
+            download_name='preview.png'
+        )
 
     except Exception as e:
         logging.exception("CRITICAL ERROR IN EMBROIDERY RENDER ENDPOINT:")
