@@ -49,17 +49,22 @@ def render_embroidery_file():
             return jsonify({"error": "Could not parse embroidery pattern."}), 400
 
         bounds = pattern.bounds()
+        
+        # --- NEW BULLETPROOF CHECK FOR DIMENSIONS ---
+        if None in bounds:
+            logging.error("Pattern bounds could not be determined. File may be empty or corrupt.")
+            return jsonify({"error": "Pattern has invalid dimensions; file may be empty or corrupt."}), 400
+
         width = int(bounds[2] - bounds[0])
         height = int(bounds[3] - bounds[1])
 
         if width <= 0 or height <= 0:
-            logging.warning("Pattern has no valid dimensions.")
+            logging.warning("Pattern has zero or negative dimensions.")
             return jsonify({"error": "Pattern has no valid dimensions."}), 400
         
         image = Image.new("RGBA", (width, height), (255, 255, 255, 0))
         draw = ImageDraw.Draw(image)
 
-        # --- FINAL ROBUST COLOR LOGIC ---
         # Filter out any threads where the color is None
         colors = [thread.color for thread in pattern.threadlist if thread.color is not None]
         
@@ -73,7 +78,6 @@ def render_embroidery_file():
 
         thread_index = 0
         current_color_rgb = colors[0]
-
         last_x, last_y = None, None
 
         for x, y, command in pattern.stitches:
@@ -95,7 +99,7 @@ def render_embroidery_file():
             last_x, last_y = ix, iy
 
         img_io = io.BytesIO()
-        image.save(img_io, 'PNG', quality=100)
+        image.save(img_io, 'PNG')
         img_io.seek(0)
         
         logging.info("Successfully rendered. Sending PNG image.")
