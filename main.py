@@ -59,16 +59,17 @@ def render_embroidery_file():
         image = Image.new("RGBA", (width, height), (255, 255, 255, 0))
         draw = ImageDraw.Draw(image)
 
-        colors = [thread.color for thread in pattern.threadlist]
+        # --- FINAL ROBUST COLOR LOGIC ---
+        # Filter out any threads where the color is None
+        colors = [thread.color for thread in pattern.threadlist if thread.color is not None]
         
         if not colors:
+            # Fallback for files like DST or files with only None colors
             colors = [(0, 0, 0), (255, 0, 0), (0, 0, 255), (0, 255, 0)] 
 
-        # --- NEW ROBUSTNESS CHECK ---
-        # This prevents a crash if a file has 0 colors and the fallback fails.
         if not colors:
-            logging.error("Pattern contains no colors to render.")
-            return jsonify({"error": "Pattern contains no colors to render."}), 400
+            logging.error("Pattern contains no valid colors to render.")
+            return jsonify({"error": "Pattern contains no valid colors to render."}), 400
 
         thread_index = 0
         current_color_rgb = colors[0]
@@ -99,7 +100,6 @@ def render_embroidery_file():
         
         logging.info("Successfully rendered. Sending PNG image.")
         
-        # --- MORE EXPLICIT send_file COMMAND ---
         return send_file(
             img_io,
             mimetype='image/png',
