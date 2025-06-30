@@ -27,7 +27,11 @@ def render():
         # Read embroidery file
         pattern = read(temp_emb_path)
 
-        xmin, ymin, xmax, ymax = pattern.extents()
+extents = pattern.extents() if callable(pattern.extents) else pattern.extents
+if not extents or len(extents) != 4:
+    return jsonify({"error": "Could not calculate extents"}), 500
+
+xmin, ymin, xmax, ymax = extents
         width = int(xmax - xmin + 20)
         height = int(ymax - ymin + 20)
 
