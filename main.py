@@ -6,15 +6,11 @@ from flask import Flask, request, send_file, jsonify
 from pyembroidery import read, STITCH, JUMP, COLOR_CHANGE
 from PIL import Image, ImageDraw
 
-# --- SETUP CODE (THIS WAS LIKELY DELETED) ---
-
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s:%(message)s')
 
 # Initialize the Flask web application
 app = Flask(__name__)
-
-# --- END OF SETUP CODE ---
 
 
 @app.route('/')
@@ -41,7 +37,6 @@ def render_embroidery_file():
 
     temp_file_path = None
     try:
-        # Securely save the uploaded file to a temporary location
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.filename)[1]) as temp_f:
             uploaded_file.save(temp_f)
             temp_file_path = temp_f.name
@@ -53,7 +48,6 @@ def render_embroidery_file():
             logging.error("Failed to parse embroidery pattern.")
             return jsonify({"error": "Could not parse embroidery pattern."}), 400
 
-        # Get the design's bounding box to calculate image size
         bounds = pattern.bounds()
         width = int(bounds[2] - bounds[0])
         height = int(bounds[3] - bounds[1])
@@ -63,15 +57,20 @@ def render_embroidery_file():
             return jsonify({"error": "Pattern has no valid dimensions."}), 400
         
         logging.info(f"Creating image with dimensions: {width}x{height}")
-        image = Image.new("RGBA", (width, height), (255, 255, 255, 0)) # Transparent background
+        image = Image.new("RGBA", (width, height), (255, 255, 255, 0))
         draw = ImageDraw.Draw(image)
 
-        # Use the thread.get_rgb() method which works for all thread types
-        colors = [thread.get_rgb() for thread in pattern.threadlist]
+        # --- FINAL CORRECTED COLOR LOGIC ---
+        # Access the .color attribute directly, which works for all thread types
+        colors = [thread.color for thread in pattern.threadlist]
         
         if not colors:
             # Fallback for files like DST that have no color info
             colors = [(0, 0, 0), (255, 0, 0), (0, 0, 255), (0, 255, 0)] 
+
+        # This check prevents a crash if a file has 0 colors and no fallback is triggered
+        if not colors:
+            return jsonify({"error": "Pattern contains no colors to render."}), 400
 
         thread_index = 0
         current_color_rgb = colors[0]
