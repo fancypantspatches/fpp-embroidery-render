@@ -41,10 +41,11 @@ def render_embroidery_file():
         image = Image.new("RGBA", (width, height), (255, 255, 255, 0)) # Transparent background
         draw = ImageDraw.Draw(image)
 
-        # --- REVISED COLOR AND DRAWING LOGIC ---
+        # --- CORRECTED COLOR AND DRAWING LOGIC ---
 
-        # Use the file's color list if it exists (common in PES), otherwise use a default palette
-        colors = [(thread.red, thread.green, thread.blue) for thread in pattern.threadlist]
+        # Use the thread.get_rgb() method which works for all thread types
+        colors = [thread.get_rgb() for thread in pattern.threadlist]
+        
         if not colors:
             # Fallback for files like DST that have no color info
             colors = [(0, 0, 0), (255, 0, 0), (0, 0, 255), (0, 255, 0)] 
@@ -79,7 +80,7 @@ def render_embroidery_file():
             # Update the last position
             last_x, last_y = ix, iy
 
-        # --- END OF REVISED LOGIC ---
+        # --- END OF CORRECTED LOGIC ---
 
         img_io = io.BytesIO()
         image.save(img_io, 'PNG')
