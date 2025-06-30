@@ -1,35 +1,53 @@
-from flask import Flask, request, send_file
-from pyembroidery import read, render_image
+from flask import Flask, request, send_file, jsonify
+from pyembroidery import read
+from PIL import Image, ImageDraw
 import requests
-import re
+import tempfile
+import os
 
 app = Flask(__name__)
 
-def to_snake_case(name):
-    return re.sub(r'[^a-zA-Z0-9]', '_', name).lower()
-
 @app.route("/render", methods=["POST"])
 def render():
-    file_url = request.json.get("fileUrl")
+    data = request.get_json()
+    file_url = data.get("fileUrl")
+
     if not file_url:
-        return {"error": "Missing fileUrl"}, 400
+        return jsonify({"error": "Missing fileUrl"}), 400
 
-    ext = ".pes" if ".pes" in file_url.lower() else ".dst"
-    file_name = f"design{ext}"
-    output_name = f"{to_snake_case(file_name.split('.')[0])}_preview.png"
+    try:
+        # Download embroidery file
+        response = requests.get(file_url)
+        response.raise_for_status()
 
-    r = requests.get(file_url)
-    with open(file_name, "wb") as f:
-        f.write(r.content)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".emb") as temp_emb:
+            temp_emb.write(response.content)
+            temp_emb_path = temp_emb.name
 
-    pattern = read(file_name)
-    render_image(pattern, output_name)
+        # Read embroidery file
+        pattern = read(temp_emb_path)
 
-    return send_file(output_name, mimetype="image/png")
+        xmin, ymin, xmax, ymax = pattern.extents()
+        width = int(xmax - xmin + 20)
+        height = int(ymax - ymin + 20)
 
-import os
+        # Render image
+        img = Image.new("RGB", (width, height), "white")
+        draw = ImageDraw.Draw(img)
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+        current_pos = None
+        for stitch in pattern.stitches:
+            x, y = stitch[0] - xmin + 10, stitch[1] - ymin + 10
+            if current_pos:
+                draw.line([current_pos, (x, y)], fill="black", width=1)
+            current_pos = (x, y)
+
+        # Save to temporary file
+        preview_path = temp_emb_path.replace(".emb", "_preview.png")
+        img.save(preview_path)
+
+        return send_file(preview_path, mimetype="image/png")
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
