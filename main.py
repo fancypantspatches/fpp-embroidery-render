@@ -1,3 +1,28 @@
+import os
+import io
+import tempfile
+import logging
+from flask import Flask, request, send_file, jsonify
+from pyembroidery import read, STITCH, JUMP, COLOR_CHANGE
+from PIL import Image, ImageDraw
+
+# --- SETUP CODE (THIS WAS LIKELY DELETED) ---
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s:%(message)s')
+
+# Initialize the Flask web application
+app = Flask(__name__)
+
+# --- END OF SETUP CODE ---
+
+
+@app.route('/')
+def health_check():
+    """A simple endpoint to confirm that the service is online and running."""
+    return jsonify({"status": "ok", "message": "Embroidery Rendering Service is running."})
+
+
 @app.route('/render-embroidery', methods=['POST'])
 def render_embroidery_file():
     """
@@ -41,8 +66,6 @@ def render_embroidery_file():
         image = Image.new("RGBA", (width, height), (255, 255, 255, 0)) # Transparent background
         draw = ImageDraw.Draw(image)
 
-        # --- CORRECTED COLOR AND DRAWING LOGIC ---
-
         # Use the thread.get_rgb() method which works for all thread types
         colors = [thread.get_rgb() for thread in pattern.threadlist]
         
@@ -51,36 +74,27 @@ def render_embroidery_file():
             colors = [(0, 0, 0), (255, 0, 0), (0, 0, 255), (0, 255, 0)] 
 
         thread_index = 0
-        # Start with the very first color
         current_color_rgb = colors[0]
 
         last_x, last_y = None, None
 
         for x, y, command in pattern.stitches:
-            # Translate stitch coordinates to image coordinates
             ix = int(x - bounds[0])
             iy = int(y - bounds[1])
 
             if command == COLOR_CHANGE:
                 thread_index += 1
-                # Cycle through colors if there are more changes than defined colors
                 current_color_rgb = colors[thread_index % len(colors)]
-                # A color change command doesn't have a stitch, so we skip to the next command
                 continue
 
-            # If the command is a JUMP, break the line. Don't draw it.
             if command == JUMP:
                 last_x, last_y = None, None
                 continue
 
-            # If the command is a STITCH and we have a previous point, draw the line
             if command == STITCH and last_x is not None:
                 draw.line((last_x, last_y, ix, iy), fill=current_color_rgb, width=2)
             
-            # Update the last position
             last_x, last_y = ix, iy
-
-        # --- END OF CORRECTED LOGIC ---
 
         img_io = io.BytesIO()
         image.save(img_io, 'PNG')
@@ -95,3 +109,8 @@ def render_embroidery_file():
     finally:
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
+
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
