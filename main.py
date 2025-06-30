@@ -26,3 +26,10 @@ def render():
     render_image(pattern, output_name)
 
     return send_file(output_name, mimetype="image/png")
+
+import os
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+
