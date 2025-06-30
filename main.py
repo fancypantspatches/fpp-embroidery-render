@@ -3,20 +3,26 @@ import io
 import tempfile
 import logging
 from flask import Flask, request, send_file, jsonify
-from pyembroidery import read, STITCH, JUMP # <-- Import the command constants
+from pyembroidery import read, STITCH, JUMP, COLOR_CHANGE
 from PIL import Image, ImageDraw
 
-# Configure the logging system
+# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s:%(message)s')
 
+# Initialize the Flask web application
 app = Flask(__name__)
 
 @app.route('/')
 def health_check():
-    return jsonify({"status": "ok", "message": "Embroidery rendering service is running."})
+    """A simple endpoint to confirm that the service is online and running."""
+    return jsonify({"status": "ok", "message": "Embroidery Rendering Service is running."})
 
-@app.route('/render', methods=['POST'])
+@app.route('/render-embroidery', methods=['POST'])
 def render_embroidery_file():
+    """
+    Accepts an embroidery file (DST, PES, etc.), renders it with full color,
+    and returns a transparent PNG image.
+    """
     if 'file' not in request.files:
         return jsonify({"error": "No file part in the request"}), 400
 
@@ -35,42 +41,42 @@ def render_embroidery_file():
         if pattern is None:
             return jsonify({"error": "Could not parse embroidery pattern."}), 400
 
-        # --- START OF THE FINAL, FINAL FIX ---
         bounds = pattern.bounds()
         width = int(bounds[2] - bounds[0])
         height = int(bounds[3] - bounds[1])
 
         if width <= 0 or height <= 0:
-            return jsonify({"error": "Pattern has no dimensions."}), 400
+            return jsonify({"error": "Pattern has no valid dimensions."}), 400
 
-        image = Image.new("RGBA", (width, height), (255, 255, 255, 0)) # Transparent background
+        image = Image.new("RGBA", (width, height), (255, 255, 255, 0))
         draw = ImageDraw.Draw(image)
 
-        last_x, last_y = None, None
+        thread_index = 0
+        current_color_rgb = (0, 0, 0)
+        if pattern.threadlist:
+             thread = pattern.threadlist[thread_index]
+             current_color_rgb = (thread.red, thread.green, thread.blue)
 
-        for stitch in pattern.stitches:
-            x, y, command = stitch[0], stitch[1], stitch[2]
-            
-            # Translate coordinates to image space (0,0)
+        last_x, last_y = None, None
+        for x, y, command in pattern.stitches:
             ix = int(x - bounds[0])
             iy = int(y - bounds[1])
-
             if command == STITCH and last_x is not None:
-                # Draw a line from the last point to the current point
-                draw.line((last_x, last_y, ix, iy), fill=(0, 0, 0), width=2) # Black stitches
-            
-            # The current point becomes the next 'last_point'
+                draw.line((last_x, last_y, ix, iy), fill=current_color_rgb, width=2)
+            elif command == COLOR_CHANGE:
+                thread_index += 1
+                if thread_index < len(pattern.threadlist):
+                    thread = pattern.threadlist[thread_index]
+                    current_color_rgb = (thread.red, thread.green, thread.blue)
             last_x, last_y = ix, iy
-        # --- END OF THE FINAL, FINAL FIX ---
 
         img_io = io.BytesIO()
         image.save(img_io, 'PNG')
         img_io.seek(0)
-
         return send_file(img_io, mimetype='image/png')
 
     except Exception as e:
-        logging.exception("CRITICAL ERROR IN RENDER ENDPOINT:")
+        logging.exception("CRITICAL ERROR IN EMBROIDERY RENDER ENDPOINT:")
         return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
     finally:
         if temp_file_path and os.path.exists(temp_file_path):
