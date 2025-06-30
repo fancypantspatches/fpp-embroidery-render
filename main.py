@@ -1,5 +1,6 @@
 import os
 import io
+import tempfile
 from flask import Flask, request, send_file, jsonify
 from pyembroidery import read
 
@@ -19,46 +20,47 @@ def render_embroidery_file():
     This endpoint accepts a file upload, renders it as a PNG,
     and returns the image directly in the response.
     """
-    # Check if a file was included in the POST request
     if 'file' not in request.files:
         return jsonify({"error": "No file part in the request"}), 400
 
-    file = request.files['file']
+    uploaded_file = request.files['file']
 
-    # Check if a file was actually selected for upload
-    if file.filename == '':
+    if uploaded_file.filename == '':
         return jsonify({"error": "No file selected"}), 400
 
-    if file:
-        try:
-            # Read the embroidery pattern directly from the uploaded file's stream
-            pattern = read(file)
+    # --- START OF THE FIX ---
+    # We will save the uploaded file to a temporary file first
+    temp_file_path = None
+    try:
+        # Create a temporary file and get its path
+        with tempfile.NamedTemporaryFile(delete=False, suffix=uploaded_file.filename) as temp_f:
+            uploaded_file.save(temp_f)
+            temp_file_path = temp_f.name
 
-            if pattern is None:
-                return jsonify({"error": "Could not parse embroidery pattern. File may be corrupt or unsupported."}), 400
+        # Now, use the temporary file's PATH with pyembroidery.read()
+        pattern = read(temp_file_path)
+        # --- END OF THE FIX ---
 
-            # Generate the image using the correct .get_image() method
-            image = pattern.get_image()
+        if pattern is None:
+            return jsonify({"error": "Could not parse embroidery pattern. File may be corrupt or unsupported."}), 400
 
-            if image is None:
-                return jsonify({"error": "Failed to generate image from pattern"}), 500
+        image = pattern.get_image()
+        if image is None:
+            return jsonify({"error": "Failed to generate image from pattern"}), 500
 
-            # Save the image to an in-memory buffer instead of a file on disk
-            img_io = io.BytesIO()
-            image.save(img_io, 'PNG')
-            img_io.seek(0) # Rewind the buffer to the beginning
+        img_io = io.BytesIO()
+        image.save(img_io, 'PNG')
+        img_io.seek(0)
 
-            # Send the image buffer as the HTTP response
-            return send_file(img_io, mimetype='image/png')
+        return send_file(img_io, mimetype='image/png')
 
-        except Exception as e:
-            # Return a generic server error if anything goes wrong
-            return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
-
-    return jsonify({"error": "Invalid file"}), 400
+    except Exception as e:
+        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+    finally:
+        # This block ensures the temporary file is deleted even if an error occurs
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
 
 if __name__ == '__main__':
-    # Get the port from the environment variable Railway provides
     port = int(os.environ.get("PORT", 8080))
-    # Run the app, listening on all network interfaces
     app.run(host='0.0.0.0', port=port)
