@@ -50,7 +50,6 @@ def render_embroidery_file():
 
         bounds = pattern.bounds()
         
-        # --- NEW BULLETPROOF CHECK FOR DIMENSIONS ---
         if None in bounds:
             logging.error("Pattern bounds could not be determined. File may be empty or corrupt.")
             return jsonify({"error": "Pattern has invalid dimensions; file may be empty or corrupt."}), 400
@@ -65,11 +64,9 @@ def render_embroidery_file():
         image = Image.new("RGBA", (width, height), (255, 255, 255, 0))
         draw = ImageDraw.Draw(image)
 
-        # Filter out any threads where the color is None
         colors = [thread.color for thread in pattern.threadlist if thread.color is not None]
         
         if not colors:
-            # Fallback for files like DST or files with only None colors
             colors = [(0, 0, 0), (255, 0, 0), (0, 0, 255), (0, 255, 0)] 
 
         if not colors:
@@ -81,6 +78,9 @@ def render_embroidery_file():
         last_x, last_y = None, None
 
         for x, y, command in pattern.stitches:
+            if x is None or y is None:
+                continue 
+
             ix = int(x - bounds[0])
             iy = int(y - bounds[1])
 
@@ -104,11 +104,15 @@ def render_embroidery_file():
         
         logging.info("Successfully rendered. Sending PNG image.")
         
+        # --- NEW DYNAMIC FILENAME LOGIC ---
+        base_filename = os.path.splitext(uploaded_file.filename)[0]
+        png_filename = f"{base_filename}.png"
+        
         return send_file(
             img_io,
             mimetype='image/png',
             as_attachment=True,
-            download_name='preview.png'
+            download_name=png_filename
         )
 
     except Exception as e:
